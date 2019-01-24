@@ -126,7 +126,7 @@ class ClusterCleanup( object ):
     def cleanup( cls ):
         "Clean up"
         info( '*** Cleaning up cluster\n' )
-        for server, user in cls.serveruser.iteritems():
+        for server, user in cls.serveruser.items():
             if server == 'localhost':
                 # Handled by mininet.clean.cleanup()
                 continue
@@ -843,11 +843,26 @@ class MininetCluster( Mininet ):
     def addController( self, *args, **kwargs ):
         "Patch to update IP address to global IP address"
         controller = Mininet.addController( self, *args, **kwargs )
-        # Update IP address for controller that may not be local
-        if ( isinstance( controller, Controller)
-             and controller.IP() == '127.0.0.1'
-             and ' eth0:' in controller.cmd( 'ip link show' ) ):
-            Intf( 'eth0', node=controller ).updateIP()
+        loopback = '127.0.0.1'
+        if ( not isinstance( controller, Controller ) or
+             controller.IP() != loopback ):
+            return
+        # Find route to a different server IP address
+        serverIPs = [ ip for ip in self.serverIP.values()
+                      if ip is not controller.IP() ]
+        if not serverIPs:
+            return  # no remote servers - loopback is fine
+        remoteIP = serverIPs[ 0 ]
+        # Route should contain 'dev <intfname>'
+        route = controller.cmd( 'ip route get', remoteIP,
+                                r'| egrep -o "dev\s[^[:space:]]+"' )
+        if not route:
+            raise Exception('addController: no route from', controller,
+                            'to', remoteIP )
+        intf = route.split()[ 1 ].strip()
+        debug( 'adding', intf, 'to', controller )
+        Intf( intf, node=controller ).updateIP()
+        debug( controller, 'IP address updated to', controller.IP() )
         return controller
 
     def buildFromTopo( self, *args, **kwargs ):
